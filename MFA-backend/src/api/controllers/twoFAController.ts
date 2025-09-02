@@ -4,7 +4,8 @@ import {User} from '@sharedTypes/DBTypes';
 import {UserResponse} from '@sharedTypes/MessageTypes';
 import fetchData from '../../utils/fetchData';
 import OTPAuth from 'otpauth';
-
+import twoFAModel from '../models/twoFAModel';
+import QRCode from 'qrcode';
 // TODO: Import necessary types and models
 
 // TODO: Define setupTwoFA function
@@ -44,8 +45,18 @@ const setupTwoFA = async (
 
 
     // TODO: Store or update the 2FA data in the database
+    await twoFAModel.create({
+      email: userResponse.user.email,
+      userId: userResponse.user.user_id,
+      twoFactorSecret: secret.base32,
+      twoFactorEnabled: true,
+    })
 
     // TODO: Generate a QR code and send it in the response
+    const imageUrl = await QRCode.toDataURL(totp.toString());
+
+    res.json({qrCodeUrl: imageUrl});
+
   } catch (error) {
     next(new CustomError((error as Error).message, 500));
   }
