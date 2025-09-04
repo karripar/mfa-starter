@@ -1,11 +1,12 @@
 import CustomError from '../../classes/CustomError';
 import {Request, Response, NextFunction} from 'express';
-import {User} from '@sharedTypes/DBTypes';
-import {UserResponse} from '@sharedTypes/MessageTypes';
+import {TokenContent, User, UserWithLevel} from '@sharedTypes/DBTypes';
+import {LoginResponse, UserResponse} from '@sharedTypes/MessageTypes';
 import fetchData from '../../utils/fetchData';
 import OTPAuth from 'otpauth';
 import twoFAModel from '../models/twoFAModel';
 import QRCode from 'qrcode';
+import jwt from 'jsonwebtoken';
 // TODO: Import necessary types and models
 
 // TODO: Define setupTwoFA function
@@ -72,10 +73,55 @@ const verifyTwoFA = async (
   console.log(email, code);
 
   try {
-    // TODO: Retrieve 2FA data from the database
-    // TODO: Validate the 2FA code
-    // TODO: If valid, get the user from AUTH API
-    // TODO: Create and return a JWT token
+    const twoFactorData = await twoFAModel.findOne({email});
+    if (!twoFactorData || !twoFactorData.twoFactorEnabled) {
+      next(new CustomError('2FA is not enabled for this user', 400));
+      return;
+    }
+
+    const totp = new OTPAuth.TOTP({
+      issuer: 'ElukkaAPI',
+      label: email,
+      algorithm: 'SHA1',
+      digits: 6,
+      period: 30,
+      secret: OTPAuth.Secret.fromBase32(twoFactorData.twoFactorSecret),
+    });
+
+    const isValid = totp.validate({token: code, window: 1});
+
+    if (isValid === null) {
+      next(new CustomError('Invalid or expired 2FA code', 400));
+      return;
+    }
+
+    const userResponse = await fetchData<UserWithLevel>(
+      `${process.env.AUTH_URL}/api/v1/users/${twoFactorData.userId}`,
+    );
+
+    if (!userResponse) {
+      next(new CustomError('User not found', 404));
+      return;
+    }
+
+    const tokenContent: TokenContent = {
+      user_id: userResponse.user_id,
+      level_name: userResponse.level_name,
+    };
+
+    if (!process.env.JWT_SECRET) {
+      next(new CustomError('JWT secret is not defined', 500));
+      return;
+    }
+
+    const token = jwt.sign(tokenContent, process.env.JWT_SECRET);
+    const loginResponse: LoginResponse = {
+      user: userResponse,
+      token,
+      message: 'Login successful',
+    };
+
+    res.json(loginResponse);
   } catch (error) {
     next(new CustomError((error as Error).message, 500));
   }
